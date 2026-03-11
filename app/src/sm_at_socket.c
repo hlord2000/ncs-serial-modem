@@ -6,6 +6,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -88,6 +89,7 @@ static struct sm_socket {
 	int send_flags;                  /* Send flags */
 	bool send_cb_set: 1;             /* Send callback set */
 	bool connected: 1;               /* Connected flag. */
+	bool listening: 1;               /* Listening for inbound TCP connections. */
 	struct sm_async_poll async_poll; /* Async poll info. */
 	struct sm_send_ntf send_ntf;     /* Send notification info. */
 } socks[SM_MAX_SOCKET_COUNT];
@@ -125,6 +127,7 @@ static void init_socket(struct sm_socket *socket)
 	socket->send_flags = 0;
 	socket->send_cb_set = false;
 	socket->connected = false;
+	socket->listening = false;
 	socket->send_ntf = (struct sm_send_ntf){0};
 	socket->async_poll = (struct sm_async_poll){0};
 }
@@ -353,7 +356,8 @@ static void poll_work_fn(struct k_work *)
 			sock->async_poll.events &= ~NRF_POLLIN;
 
 			/* Automatic data reception may reactivate POLLIN. */
-			if (((at_mode && (sock->async_poll.adr_flags & SM_ADR_AT_MODE)) ||
+			if (!sock->listening &&
+			    ((at_mode && (sock->async_poll.adr_flags & SM_ADR_AT_MODE)) ||
 			     (data_mode && (sock->async_poll.adr_flags & SM_ADR_DATA_MODE)))) {
 				auto_reception(sock);
 			}
@@ -486,6 +490,26 @@ static int clear_so_send_cb(struct sm_socket *socket)
 	return err;
 }
 
+static int socket_set_send_timeout(struct sm_socket *sock)
+{
+	int ret;
+	struct timeval tmo = {.tv_sec = SOCKET_SEND_TMO_SEC};
+
+	ret = nrf_setsockopt(sock->fd, NRF_SOL_SOCKET, NRF_SO_SNDTIMEO, &tmo, sizeof(tmo));
+	if (ret) {
+		LOG_ERR("nrf_setsockopt(%d) error: %d", NRF_SO_SNDTIMEO, -errno);
+		return -errno;
+	}
+
+	return 0;
+}
+
+static int socket_enable_poll(struct sm_socket *sock)
+{
+	return update_poll_events(
+		sock, NRF_POLLIN | NRF_POLLOUT | NRF_POLLERR | NRF_POLLHUP | NRF_POLLNVAL, true);
+}
+
 static int do_socket_open(struct sm_socket *sock)
 {
 	int ret = 0;
@@ -526,12 +550,8 @@ static int do_socket_open(struct sm_socket *sock)
 	}
 
 	sock->fd = ret;
-	struct timeval tmo = {.tv_sec = SOCKET_SEND_TMO_SEC};
-
-	ret = nrf_setsockopt(sock->fd, NRF_SOL_SOCKET, NRF_SO_SNDTIMEO, &tmo, sizeof(tmo));
+	ret = socket_set_send_timeout(sock);
 	if (ret) {
-		LOG_ERR("nrf_setsockopt(%d) error: %d", NRF_SO_SNDTIMEO, -errno);
-		ret = -errno;
 		goto error;
 	}
 
@@ -541,14 +561,15 @@ static int do_socket_open(struct sm_socket *sock)
 		goto error;
 	}
 
-	rsp_send("\r\n#XSOCKET: %d,%d,%d\r\n", sock->fd, sock->type, proto);
-
-	/* Update poll events for xapoll and automatic data reception */
 	sock->async_poll.adr_flags = poll_ctx.adr_flags;
 	sock->async_poll.adr_hex = poll_ctx.adr_hex;
 	sock->async_poll.xapoll_events_requested = poll_ctx.xapoll_events_requested;
-	update_poll_events(
-		sock, NRF_POLLIN | NRF_POLLOUT | NRF_POLLERR | NRF_POLLHUP | NRF_POLLNVAL, true);
+	ret = socket_enable_poll(sock);
+	if (ret) {
+		goto error;
+	}
+
+	rsp_send("\r\n#XSOCKET: %d,%d,%d\r\n", sock->fd, sock->type, proto);
 
 	return 0;
 
@@ -579,13 +600,8 @@ static int do_secure_socket_open(struct sm_socket *sock, int peer_verify)
 		return -errno;
 	}
 	sock->fd = ret;
-
-	struct timeval tmo = {.tv_sec = SOCKET_SEND_TMO_SEC};
-
-	ret = nrf_setsockopt(sock->fd, NRF_SOL_SOCKET, NRF_SO_SNDTIMEO, &tmo, sizeof(tmo));
+	ret = socket_set_send_timeout(sock);
 	if (ret) {
-		LOG_ERR("nrf_setsockopt(%d) error: %d", NRF_SO_SNDTIMEO, -errno);
-		ret = -errno;
 		goto error;
 	}
 
@@ -625,14 +641,15 @@ static int do_secure_socket_open(struct sm_socket *sock, int peer_verify)
 		}
 	}
 
-	rsp_send("\r\n#XSSOCKET: %d,%d,%d\r\n", sock->fd, sock->type, proto);
-
-	/* Update poll events for xapoll and automatic data reception */
 	sock->async_poll.adr_flags = poll_ctx.adr_flags;
 	sock->async_poll.adr_hex = poll_ctx.adr_hex;
 	sock->async_poll.xapoll_events_requested = poll_ctx.xapoll_events_requested;
-	update_poll_events(
-		sock, NRF_POLLIN | NRF_POLLOUT | NRF_POLLERR | NRF_POLLHUP | NRF_POLLNVAL, true);
+	ret = socket_enable_poll(sock);
+	if (ret) {
+		goto error;
+	}
+
+	rsp_send("\r\n#XSSOCKET: %d,%d,%d\r\n", sock->fd, sock->type, proto);
 
 	return 0;
 
@@ -969,6 +986,151 @@ static int do_connect(struct sm_socket *sock, const char *url, uint16_t port)
 	return ret;
 }
 
+#if defined(CONFIG_SM_TCP_SERVER)
+static int tcp_server_socket_validate(struct sm_socket *sock)
+{
+	if (sock == NULL) {
+		return -EINVAL;
+	}
+	if (sock->sec_tag != SEC_TAG_TLS_INVALID) {
+		LOG_ERR("Secure TCP server sockets are not supported");
+		return -EOPNOTSUPP;
+	}
+	if (sock->type != NRF_SOCK_STREAM || sock->role != AT_SOCKET_ROLE_SERVER) {
+		LOG_ERR("Invalid socket type or role");
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+static int do_listen(struct sm_socket *sock)
+{
+	int ret;
+
+	ret = tcp_server_socket_validate(sock);
+	if (ret) {
+		return ret;
+	}
+	if (sock->connected) {
+		LOG_ERR("Socket is already connected");
+		return -EISCONN;
+	}
+	if (sock->listening) {
+		return 0;
+	}
+
+	ret = nrf_listen(sock->fd, 1);
+	if (ret < 0) {
+		LOG_ERR("nrf_listen() error: %d", -errno);
+		return -errno;
+	}
+
+	sock->listening = true;
+
+	return 0;
+}
+
+static int do_accept(struct sm_socket *listener, int timeout)
+{
+	int ret;
+	char peer_addr[NRF_INET6_ADDRSTRLEN] = {0};
+	uint16_t peer_port = 0;
+	struct sm_socket *sock = NULL;
+	struct nrf_sockaddr_in6 peer = {0};
+	nrf_socklen_t peer_len = sizeof(peer);
+	struct nrf_pollfd pfd = {
+		.fd = listener->fd,
+		.events = NRF_POLLIN | NRF_POLLERR | NRF_POLLHUP | NRF_POLLNVAL,
+	};
+	int poll_timeout = timeout == 0 ? -1 : timeout * MSEC_PER_SEC;
+
+	ret = tcp_server_socket_validate(listener);
+	if (ret) {
+		return ret;
+	}
+	if (!listener->listening) {
+		LOG_ERR("Socket is not listening");
+		return -EINVAL;
+	}
+	if (timeout < 0 || (timeout > 0 && timeout > (INT_MAX / MSEC_PER_SEC))) {
+		return -EINVAL;
+	}
+
+	sock = find_avail_socket();
+	if (sock == NULL) {
+		LOG_ERR("Max socket count reached");
+		return -EINVAL;
+	}
+
+	ret = nrf_poll(&pfd, 1, poll_timeout);
+	if (ret < 0) {
+		LOG_ERR("nrf_poll() error: %d", -errno);
+		return -errno;
+	}
+	if (ret == 0) {
+		return -EAGAIN;
+	}
+	if (pfd.revents & NRF_POLLNVAL) {
+		return -EBADF;
+	}
+	if (pfd.revents & NRF_POLLERR) {
+		return -EIO;
+	}
+	if (pfd.revents & NRF_POLLHUP) {
+		return -ECONNABORTED;
+	}
+	if ((pfd.revents & NRF_POLLIN) == 0) {
+		return -EAGAIN;
+	}
+
+	ret = nrf_accept(listener->fd, (struct nrf_sockaddr *)&peer, &peer_len);
+	if (ret < 0) {
+		LOG_ERR("nrf_accept() error: %d", -errno);
+		return -errno;
+	}
+
+	init_socket(sock);
+	sock->type = listener->type;
+	sock->role = listener->role;
+	sock->sec_tag = listener->sec_tag;
+	sock->family = listener->family;
+	sock->fd = ret;
+	sock->cid = listener->cid;
+	sock->connected = true;
+	sock->async_poll.adr_flags = listener->async_poll.adr_flags;
+	sock->async_poll.adr_hex = listener->async_poll.adr_hex;
+	sock->async_poll.xapoll_events_requested = listener->async_poll.xapoll_events_requested;
+
+	ret = socket_set_send_timeout(sock);
+	if (ret) {
+		nrf_close(sock->fd);
+		init_socket(sock);
+		return ret;
+	}
+	ret = socket_enable_poll(sock);
+	if (ret) {
+		nrf_close(sock->fd);
+		init_socket(sock);
+		return ret;
+	}
+
+	ret = util_get_peer_addr((struct net_sockaddr *)&peer, peer_addr, &peer_port);
+	if (ret) {
+		peer_addr[0] = '\0';
+	}
+
+	rsp_send("\r\n#XACCEPT: %d,\"%s\"\r\n", sock->fd, peer_addr);
+
+	ret = update_poll_events(listener, NRF_POLLIN, true);
+	if (ret) {
+		LOG_WRN("Failed to re-enable POLLIN for listener %d: %d", listener->fd, ret);
+	}
+
+	return 0;
+}
+#endif
+
 static int do_send(struct sm_socket *sock, const uint8_t *data, int len, int flags)
 {
 	int ret = 0;
@@ -976,6 +1138,10 @@ static int do_send(struct sm_socket *sock, const uint8_t *data, int len, int fla
 	bool send_ntf = (flags & SM_MSG_SEND_ACK) != 0;
 
 	LOG_DBG("send flags=%d", flags);
+	if (sock->listening) {
+		LOG_ERR("Socket is listening");
+		return -EOPNOTSUPP;
+	}
 
 	if (send_ntf) {
 		/* Set send callback. */
@@ -1047,6 +1213,11 @@ static int do_recv(struct sm_socket *sock, int timeout, int flags,
 	int ret;
 	int sockfd = sock->fd;
 	struct timeval tmo = {.tv_sec = timeout};
+
+	if (sock->listening) {
+		LOG_ERR("Socket is listening");
+		return -EOPNOTSUPP;
+	}
 
 	ret = nrf_setsockopt(sock->fd, NRF_SOL_SOCKET, NRF_SO_RCVTIMEO, &tmo, sizeof(tmo));
 	if (ret) {
@@ -1670,6 +1841,68 @@ STATIC int handle_at_connect(enum at_parser_cmd_type cmd_type, struct at_parser 
 
 	return err;
 }
+
+#if defined(CONFIG_SM_TCP_SERVER)
+SM_AT_CMD_CUSTOM(xlisten, "AT#XLISTEN", handle_at_listen);
+STATIC int handle_at_listen(enum at_parser_cmd_type cmd_type, struct at_parser *parser, uint32_t)
+{
+	int err = -EINVAL;
+	int fd;
+	struct sm_socket *sock = NULL;
+
+	switch (cmd_type) {
+	case AT_PARSER_CMD_TYPE_SET:
+		err = at_parser_num_get(parser, 1, &fd);
+		if (err) {
+			return err;
+		}
+		sock = find_socket(fd);
+		if (sock == NULL) {
+			return -EINVAL;
+		}
+		err = do_listen(sock);
+		break;
+
+	default:
+		break;
+	}
+
+	return err;
+}
+
+SM_AT_CMD_CUSTOM(xaccept, "AT#XACCEPT", handle_at_accept);
+STATIC int handle_at_accept(enum at_parser_cmd_type cmd_type, struct at_parser *parser,
+			    uint32_t)
+{
+	int err = -EINVAL;
+	int fd;
+	int timeout;
+	struct sm_socket *sock = NULL;
+
+	switch (cmd_type) {
+	case AT_PARSER_CMD_TYPE_SET:
+		err = at_parser_num_get(parser, 1, &fd);
+		if (err) {
+			return err;
+		}
+		sock = find_socket(fd);
+		if (sock == NULL) {
+			return -EINVAL;
+		}
+		err = at_parser_num_get(parser, 2, &timeout);
+		if (err) {
+			return err;
+		}
+		err = do_accept(sock, timeout);
+		break;
+
+	default:
+		break;
+	}
+
+	return err;
+}
+#endif
 
 SM_AT_CMD_CUSTOM(xsend, "AT#XSEND", handle_at_send);
 STATIC int handle_at_send(enum at_parser_cmd_type cmd_type, struct at_parser *parser,

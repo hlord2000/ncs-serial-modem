@@ -257,6 +257,12 @@ config SM_MQTTC
 	select MQTT_LIB_TLS
 	select EXPERIMENTAL
 
+config SM_TCP_SERVER
+	bool "TCP server socket AT commands"
+	help
+	  Enable the AT#XLISTEN and AT#XACCEPT commands for non-secure TCP
+	  server sockets opened with AT#XSOCKET using role 1.
+
 config SM_FULL_FOTA
 	bool "Full modem FOTA support"
 

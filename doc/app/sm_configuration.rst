@@ -41,6 +41,14 @@ CONFIG_SM_PPP - Enable PPP functionality
    When CMUX is also enabled, PPP is usable only through a CMUX channel.
    See :ref:`SM_AT_PPP` for more information.
 
+.. _CONFIG_SM_TCP_SERVER:
+
+CONFIG_SM_TCP_SERVER - Enable TCP server AT commands
+   This option enables the ``AT#XLISTEN`` and ``AT#XACCEPT`` commands for
+   non-secure TCP server sockets opened with ``AT#XSOCKET`` using role ``1``.
+   Accepted TCP connections are exposed as their own socket handles.
+   See :ref:`SM_AT_SOCKET` for more information.
+
 .. _CONFIG_SM_EXTERNAL_XTAL:
 
 CONFIG_SM_EXTERNAL_XTAL - Use external XTAL for UARTE

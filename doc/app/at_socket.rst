@@ -809,6 +809,118 @@ Test command
 
 The test command is not supported.
 
+Listen for connections #XLISTEN
+===============================
+
+The ``#XLISTEN`` command allows you to put a TCP socket in listening mode for incoming
+connections.
+
+This command is for non-secure TCP server sockets.
+
+.. note::
+   This command is available only when :ref:`CONFIG_SM_TCP_SERVER <CONFIG_SM_TCP_SERVER>`
+   is enabled.
+
+Set command
+-----------
+
+The set command allows you to put the TCP socket in listening mode for incoming
+connections.
+
+Syntax
+~~~~~~
+
+::
+
+   AT#XLISTEN=<handle>
+
+* The ``<handle>`` parameter is an integer that specifies the socket handle returned
+  from ``#XSOCKET``.
+
+Response syntax
+~~~~~~~~~~~~~~~
+
+There is no response.
+
+Example
+~~~~~~~
+
+::
+
+   AT#XLISTEN=0
+   OK
+
+Read command
+------------
+
+The read command is not supported.
+
+Test command
+------------
+
+The test command is not supported.
+
+Accept connection #XACCEPT
+==========================
+
+The ``#XACCEPT`` command allows you to accept an incoming connection from a TCP
+client.
+
+This command is for non-secure TCP server sockets.
+
+.. note::
+   This command is available only when :ref:`CONFIG_SM_TCP_SERVER <CONFIG_SM_TCP_SERVER>`
+   is enabled.
+
+Set command
+-----------
+
+The set command allows you to wait for a TCP client to connect.
+
+Syntax
+~~~~~~
+
+::
+
+   AT#XACCEPT=<handle>,<timeout>
+
+* The ``<handle>`` parameter is an integer that specifies the listening socket
+  handle returned from ``#XSOCKET``.
+
+* The ``<timeout>`` parameter sets the timeout value in seconds.
+  ``0`` means no timeout, and it makes the request block until a client connects.
+
+Response syntax
+~~~~~~~~~~~~~~~
+
+::
+
+   #XACCEPT: <handle>,"<ip_addr>"
+
+* The ``<handle>`` parameter is an integer.
+  It represents the socket handle of the accepted connection.
+
+* The ``<ip_addr>`` parameter indicates the IP address of the peer host.
+
+Example
+~~~~~~~
+
+::
+
+   AT#XACCEPT=0,60
+   #XACCEPT: 1,"192.168.0.2"
+   OK
+
+Read command
+------------
+
+The read command is not supported.
+
+Test command
+------------
+
+The test command is not supported.
+
 Send data #XSEND
 ================
 

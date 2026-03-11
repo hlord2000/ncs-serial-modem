@@ -28,6 +28,10 @@ extern int handle_at_socket_wrapper_xsocket(char *buf, size_t len, char *at_cmd)
 extern int handle_at_close_wrapper_xclose(char *buf, size_t len, char *at_cmd);
 extern int handle_at_bind_wrapper_xbind(char *buf, size_t len, char *at_cmd);
 extern int handle_at_connect_wrapper_xconnect(char *buf, size_t len, char *at_cmd);
+#if defined(CONFIG_SM_TCP_SERVER)
+extern int handle_at_listen_wrapper_xlisten(char *buf, size_t len, char *at_cmd);
+extern int handle_at_accept_wrapper_xaccept(char *buf, size_t len, char *at_cmd);
+#endif
 extern int handle_at_send_wrapper_xsend(char *buf, size_t len, char *at_cmd);
 extern int handle_at_recv_wrapper_xrecv(char *buf, size_t len, char *at_cmd);
 extern int handle_at_sendto_wrapper_xsendto(char *buf, size_t len, char *at_cmd);
@@ -75,6 +79,12 @@ int nrf_modem_at_cmd(void *buf, size_t buf_size, const char *fmt, ...)
 			ret = handle_at_bind_wrapper_xbind((char *)buf, buf_size, at_cmd);
 		} else if (strncasecmp(at_cmd, "AT#XCONNECT", 11) == 0) {
 			ret = handle_at_connect_wrapper_xconnect((char *)buf, buf_size, at_cmd);
+#if defined(CONFIG_SM_TCP_SERVER)
+		} else if (strncasecmp(at_cmd, "AT#XLISTEN", 10) == 0) {
+			ret = handle_at_listen_wrapper_xlisten((char *)buf, buf_size, at_cmd);
+		} else if (strncasecmp(at_cmd, "AT#XACCEPT", 10) == 0) {
+			ret = handle_at_accept_wrapper_xaccept((char *)buf, buf_size, at_cmd);
+#endif
 		} else if (strncasecmp(at_cmd, "AT#XSENDTO", 10) == 0) {
 			ret = handle_at_sendto_wrapper_xsendto((char *)buf, buf_size, at_cmd);
 		} else if (strncasecmp(at_cmd, "AT#XSEND", 8) == 0) {

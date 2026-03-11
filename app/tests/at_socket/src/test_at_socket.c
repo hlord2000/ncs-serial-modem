@@ -776,6 +776,125 @@ void test_xconnect_operation(void)
 	send_at_command("AT#XCLOSE=1\r\n");
 }
 
+#if defined(CONFIG_SM_TCP_SERVER)
+static int mock_nrf_poll_accept_ready_callback(struct nrf_pollfd *fds, nrf_nfds_t nfds, int timeout,
+					       int num_calls)
+{
+	fds[0].revents = NRF_POLLIN;
+	return 1;
+}
+
+static int mock_nrf_poll_timeout_callback(struct nrf_pollfd *fds, nrf_nfds_t nfds, int timeout,
+					  int num_calls)
+{
+	return 0;
+}
+
+static int mock_nrf_accept_ipv4_callback(int socket, struct nrf_sockaddr *address,
+					 nrf_socklen_t *address_len, int num_calls)
+{
+	struct nrf_sockaddr_in *sa_in = (struct nrf_sockaddr_in *)address;
+
+	sa_in->sin_family = NRF_AF_INET;
+	sa_in->sin_port = net_htons(5000);
+	sa_in->sin_addr.s_addr = net_htonl(0xC0A80064); /* 192.168.0.100 */
+	*address_len = sizeof(struct nrf_sockaddr_in);
+
+	return 5;
+}
+
+static char *mock_zsock_inet_ntop_accept_callback(
+	net_sa_family_t af, const void *src, char *dst, net_socklen_t size, int num_calls)
+{
+	strcpy(dst, "192.168.0.100");
+	return dst;
+}
+
+void test_xlisten_operation(void)
+{
+	const char *response;
+
+	__cmock_nrf_socket_ExpectAndReturn(NRF_AF_INET, NRF_SOCK_STREAM, NRF_IPPROTO_TCP, 0);
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_SNDTIMEO */
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_POLLCB */
+	send_at_command("AT#XSOCKET=1,1,1\r\n");
+	clear_captured_response();
+
+	__cmock_nrf_listen_ExpectAndReturn(0, 1, 0);
+	send_at_command("AT#XLISTEN=0\r\n");
+
+	response = get_captured_response();
+	TEST_ASSERT_TRUE(strstr(response, "OK") != NULL);
+
+	__cmock_nrf_close_ExpectAndReturn(0, 0);
+	send_at_command("AT#XCLOSE=0\r\n");
+}
+
+void test_xaccept_operation(void)
+{
+	const char *response;
+
+	__cmock_nrf_socket_ExpectAndReturn(NRF_AF_INET, NRF_SOCK_STREAM, NRF_IPPROTO_TCP, 0);
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_SNDTIMEO */
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_POLLCB */
+	send_at_command("AT#XSOCKET=1,1,1\r\n");
+	clear_captured_response();
+
+	__cmock_nrf_listen_ExpectAndReturn(0, 1, 0);
+	send_at_command("AT#XLISTEN=0\r\n");
+	clear_captured_response();
+
+	__cmock_nrf_poll_Stub(mock_nrf_poll_accept_ready_callback);
+	__cmock_nrf_accept_Stub(mock_nrf_accept_ipv4_callback);
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* Accepted socket SO_SNDTIMEO */
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* Accepted socket SO_POLLCB */
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* Listener SO_POLLCB re-arm */
+	__cmock_zsock_inet_ntop_Stub(mock_zsock_inet_ntop_accept_callback);
+
+	send_at_command("AT#XACCEPT=0,60\r\n");
+
+	response = get_captured_response();
+	TEST_ASSERT_TRUE(strstr(response, "#XACCEPT: 5,\"192.168.0.100\"") != NULL);
+	TEST_ASSERT_TRUE(strstr(response, "OK") != NULL);
+
+	clear_captured_response();
+	send_at_command("AT#XSOCKET?\r\n");
+	response = get_captured_response();
+	TEST_ASSERT_TRUE(strstr(response, "#XSOCKET: 0,1,1,1,0") != NULL);
+	TEST_ASSERT_TRUE(strstr(response, "#XSOCKET: 5,1,1,1,0") != NULL);
+	TEST_ASSERT_TRUE(strstr(response, "OK") != NULL);
+
+	__cmock_nrf_close_ExpectAndReturn(5, 0);
+	send_at_command("AT#XCLOSE=5\r\n");
+	__cmock_nrf_close_ExpectAndReturn(0, 0);
+	send_at_command("AT#XCLOSE=0\r\n");
+}
+
+void test_xaccept_timeout(void)
+{
+	const char *response;
+
+	__cmock_nrf_socket_ExpectAndReturn(NRF_AF_INET, NRF_SOCK_STREAM, NRF_IPPROTO_TCP, 0);
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_SNDTIMEO */
+	__cmock_nrf_setsockopt_ExpectAnyArgsAndReturn(0); /* SO_POLLCB */
+	send_at_command("AT#XSOCKET=1,1,1\r\n");
+	clear_captured_response();
+
+	__cmock_nrf_listen_ExpectAndReturn(0, 1, 0);
+	send_at_command("AT#XLISTEN=0\r\n");
+	clear_captured_response();
+
+	__cmock_nrf_poll_Stub(mock_nrf_poll_timeout_callback);
+	send_at_command("AT#XACCEPT=0,1\r\n");
+
+	response = get_captured_response();
+	TEST_ASSERT_TRUE(strstr(response, "ERROR") != NULL);
+
+	__cmock_nrf_close_ExpectAndReturn(0, 0);
+	send_at_command("AT#XCLOSE=0\r\n");
+}
+#endif
+
 /*
  * Test: Send data via AT#XSEND with unformatted string
  * - Command: AT#XSEND=<handle>,<mode>,<flags>,"<data>"\r\n

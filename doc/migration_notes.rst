@@ -397,10 +397,11 @@ If you need any of those features with this |SM|, please contact customer suppor
     * ``AT#XTCPSVR``
     * ``AT#XTCPHANGUP``
     * ``AT#XUDPSVR``
-    * ``AT#XLISTEN``
-    * ``AT#XACCEPT``
 
     There is no direct replacement for these commands.
+    When :ref:`CONFIG_SM_TCP_SERVER <CONFIG_SM_TCP_SERVER>` is enabled,
+    ``AT#XLISTEN`` and ``AT#XACCEPT`` are available for handle-based,
+    non-secure TCP server sockets.
     In addition, the ``AT_SO_TCP_SRV_SESSTIMEO`` socket option has been removed.
 
   * HTTP client functionality, including ``AT#XHTTPCCON`` and ``AT#XHTTPCREQ`` commands, and ``#XHTTPCRSP`` notification.
