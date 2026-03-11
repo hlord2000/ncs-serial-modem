@@ -442,6 +442,7 @@ To act as a TCP server, |public_ip_address_req|
 
 .. note::
    This test requires :ref:`CONFIG_SM_TCP_SERVER <CONFIG_SM_TCP_SERVER>` to be enabled.
+   You can enable it for the build with :file:`overlay-tcp-server.conf`.
 
 To test the TCP server functionality, complete the following steps:
 

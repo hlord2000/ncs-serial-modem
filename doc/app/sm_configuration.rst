@@ -44,7 +44,8 @@ CONFIG_SM_PPP - Enable PPP functionality
 .. _CONFIG_SM_TCP_SERVER:
 
 CONFIG_SM_TCP_SERVER - Enable TCP server AT commands
-   This option enables the ``AT#XLISTEN`` and ``AT#XACCEPT`` commands for
+   This option is enabled by the TCP server overlay.
+   It enables the ``AT#XLISTEN`` and ``AT#XACCEPT`` commands for
    non-secure TCP server sockets opened with ``AT#XSOCKET`` using role ``1``.
    Accepted TCP connections are exposed as their own socket handles.
    See :ref:`SM_AT_SOCKET` for more information.
@@ -295,6 +296,9 @@ The following configuration files are provided:
 * :file:`overlay-ppp.conf` - Configuration file that adds support for the Point-to-Point Protocol (PPP).
   This disables most of the IP-based protocols available through AT commands (such as MQTT) as it is expected that the controlling chip's own IP stack is used instead.
   See :ref:`CONFIG_SM_PPP <CONFIG_SM_PPP>` and :ref:`SM_AT_PPP` for more information.
+
+* :file:`overlay-tcp-server.conf` - Configuration file that adds support for the ``AT#XLISTEN`` and ``AT#XACCEPT`` commands for non-secure TCP server sockets.
+  See :ref:`CONFIG_SM_TCP_SERVER <CONFIG_SM_TCP_SERVER>` for more information.
 
 * :file:`overlay-trace-backend-cmux.conf` - Configuration file that enables CMUX modem trace backend.
   When enabled, modem traces are transmitted on a dedicated CMUX channel.

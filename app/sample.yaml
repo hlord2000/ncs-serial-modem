@@ -118,6 +118,16 @@ tests:
       - thingy91x/nrf9151/ns
     integration_platforms:
       - nrf9151dk/nrf9151/ns
+  serial_modem.tcp_server:
+    sysbuild: true
+    build_only: true
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-tcp-server.conf
+    platform_allow:
+      - nrf9151dk/nrf9151/ns
+      - thingy91x/nrf9151/ns
+    integration_platforms:
+      - nrf9151dk/nrf9151/ns
   serial_modem.mfw_full_fota_and_dfu:
     sysbuild: true
     build_only: true
